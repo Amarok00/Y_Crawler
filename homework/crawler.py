@@ -24,9 +24,9 @@ def get_filename(filename: str):
     return h.hexdigest()
 
 
-def get_only_new(newslist: list[NewsItem]):
+async def get_only_new(newslist: list[NewsItem]):
     try:
-        registered_news = os.listdir(DOWNLOADS_DIR)
+        registered_news = await aiofiles.os.listdir(DOWNLOADS_DIR)
     except FileNotFoundError:
         return newslist
     else:
@@ -59,8 +59,7 @@ async def save_file(newsdir, filename, content):
     logging.debug("File %s saved" % filename)
     await counter.incr_files()
 
-
-async def make_dirs(names: str or list[str]):
+async def make_dirs(names: str):
     if isinstance(names, str):
         names = [names]
     for dirname in names:
@@ -123,10 +122,11 @@ async def fetch(session, page):
             async with session.get(page) as response:
                 html = await response.text()
                 break
-        except TimeoutError:
-            await asyncio.sleep(random.randint(1, 3) / 10 + round(2 * i / 10))
+        except aiohttp.ClientTimeoutError:
+            retry_interval = (i + 1) * 2  # Adjust the retry interval if needed
+            await asyncio.sleep(retry_interval)
             continue
-        except Exception as exc:
+        except aiohttp.ClientError as exc:
             err = type(exc).__name__
             logging.error("%s: Cannot get %s" % (err, page))
             break
@@ -253,10 +253,12 @@ async def cycle(startflag=None):
     await counter.zero()
     logging.info("Getting news list...")
     main_html = await download_page(ROOTPAGE)
-    news_list = get_only_new(parse_news_list(main_html))
+    news_list = await get_only_new(parse_news_list(main_html))
 
     news_list = news_list + tracker.unregistered
     await tracker.zero()
+
+    # rest of your code...
 
     if not news_list:
         logging.info("Everything is up-to-date. Idle...")
@@ -311,16 +313,13 @@ async def cycle(startflag=None):
 
 async def main():
     startflag = True
-    try:
-        while True:
-            start = time.time()
-            await cycle(startflag)
-            elapsed = round(time.time() - start, 2)
-            logging.info("Last cycle completed in %s sec" % elapsed)
-            startflag = False
-            await asyncio.sleep(PERIOD)
-    except KeyboardInterrupt:
-        return
+    while True:
+        start = time.time()
+        await cycle(startflag)
+        elapsed = round(time.time() - start, 2)
+        logging.info("Last cycle completed in %s sec" % elapsed)
+        startflag = False
+        await asyncio.sleep(PERIOD)
 
 
 if __name__ == "__main__":
